@@ -1,0 +1,1095 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Carte Restaurants – Mobile friendly</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+  <style>
+    :root { --bg:#ffffff; --border:#e5e7eb; --text:#111827; --muted:#6b7280; --chip:#f3f4f6; }
+    html, body { height:100%; margin:0; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
+    #map { height:100%; width:100%; }
+
+    .topbar{
+      position: fixed; top: 10px; left: 10px; right: 10px; z-index: 9999;
+      display:flex; gap:8px; align-items:center;
+      background: rgba(255,255,255,.92); backdrop-filter: blur(10px);
+      border: 1px solid var(--border); border-radius: 14px;
+      padding: 10px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.08);
+    }
+    .topbar input{
+      flex:1; min-width: 0;
+      border:1px solid var(--border); border-radius: 12px; padding:10px 12px; font-size:14px;
+    }
+    .btn{
+      border:1px solid var(--border); background:#fff; border-radius: 12px;
+      padding:10px 12px; font-size:13px; cursor:pointer; white-space:nowrap;
+    }
+
+    .sheet{
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 9998;
+      max-height: 72vh;
+      transform: translateY(calc(100% - 56px));
+      transition: transform .25s ease;
+      background: rgba(255,255,255,.96); backdrop-filter: blur(10px);
+      border-top: 1px solid var(--border);
+      border-top-left-radius: 18px; border-top-right-radius: 18px;
+      box-shadow: 0 -10px 24px rgba(0,0,0,.10);
+      display:flex; flex-direction:column;
+    }
+    .sheet.open{ transform: translateY(0); }
+    .sheet-handle{ height:56px; display:flex; align-items:center; justify-content:center; }
+    .grab{ width: 44px; height: 5px; border-radius: 999px; background: #d1d5db; }
+
+    .chips{
+      display:flex; gap:6px; flex-wrap:wrap; padding: 0 14px 10px;
+      overflow:auto;
+    }
+    .chip{
+      border:1px solid var(--border); background: var(--chip);
+      border-radius: 999px; padding: 6px 10px; font-size:12px; cursor:pointer; user-select:none;
+    }
+    .chip.active{ background:#111827; color:#fff; border-color:#111827; }
+
+    .list{ padding: 0 14px 14px; overflow:auto; }
+    .item{
+      border:1px solid var(--border); border-radius: 14px; padding: 10px; margin-bottom: 10px;
+      background:#fff;
+    }
+    .item b{ display:block; font-size:13px; margin-bottom: 4px; }
+    .meta{ font-size:12px; color:var(--muted); margin-bottom: 4px; }
+    .addr{ font-size:12px; margin-bottom: 6px; }
+    .item a{ font-size:12px; color:#1f2937; word-break: break-all; }
+
+    @media (min-width: 1000px){
+      .topbar{ left: 16px; right: auto; width: 520px; }
+      .sheet{ left: 16px; right: auto; width: 520px; border:1px solid var(--border);
+              border-radius: 18px; bottom: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div class="topbar">
+    <input id="search" type="search" placeholder="Rechercher un restaurant…" />
+    <button class="btn" id="fit">Zoom</button>
+    <button class="btn" id="toggleList">Liste</button>
+  </div>
+
+  <div class="sheet" id="sheet">
+    <div class="sheet-handle" id="sheetHandle"><div class="grab"></div></div>
+    <div style="display:flex; align-items:baseline; gap:8px; padding: 0 14px 10px;">
+      <div style="font-weight:800; font-size:14px;" id="sheetTitle">Restaurants</div>
+      <div style="font-size:12px; color:var(--muted);" id="sheetSub">Tap sur une ligne → zoom + popup</div>
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="list" id="list"></div>
+  </div>
+
+<script>
+const PLACES = [
+  {
+    "name": "Langosteria",
+    "url": "https://www.instagram.com/langosteria/",
+    "group": "Paris 1",
+    "geocode_query": "Langosteria, 1e arrondissement, Paris, France",
+    "people": "Pauline et Morgane",
+    "handle": "@langosteria",
+    "n": 1,
+    "arr": 1.0,
+    "zone": "Paris 1"
+  },
+  {
+    "name": "Doki Doki Louvre",
+    "url": "https://www.instagram.com/dokidoki_handrollbar/",
+    "group": "Paris 1",
+    "geocode_query": "Doki Doki Louvre, 1e arrondissement, Paris, France",
+    "people": "Pauline et Marine",
+    "handle": "@dokidoki_handrollbar",
+    "n": 2,
+    "arr": 1.0,
+    "zone": "Paris 1"
+  },
+  {
+    "name": "Cloche",
+    "url": "https://www.instagram.com/clocheclochecloche/?hl=fr",
+    "group": "Paris 1",
+    "geocode_query": "Cloche, 1e arrondissement, Paris, France",
+    "people": "Leevan",
+    "handle": "@clocheclochecloche",
+    "n": 3,
+    "arr": 1.0,
+    "zone": "Paris 1"
+  },
+  {
+    "name": "Café Marly",
+    "url": "https://www.instagram.com/cafe_marly/",
+    "group": "Paris 1",
+    "geocode_query": "Café Marly, 1e arrondissement, Paris, France",
+    "people": "Chahinez et Sidney",
+    "handle": "@cafe_marly",
+    "n": 4,
+    "arr": 1.0,
+    "zone": "Paris 1"
+  },
+  {
+    "name": "Céfé Ruc",
+    "url": "https://www.instagram.com/caferucparis/",
+    "group": "Paris 1",
+    "geocode_query": "Céfé Ruc, 1e arrondissement, Paris, France",
+    "people": "Chahinez et Sidney",
+    "handle": "@caferucparis",
+    "n": 5,
+    "arr": 1.0,
+    "zone": "Paris 1"
+  },
+  {
+    "name": "Hollywood Savoy",
+    "url": "https://www.instagram.com/hollywood_savoy/",
+    "group": "Paris 2",
+    "geocode_query": "Hollywood Savoy, 2e arrondissement, Paris, France",
+    "people": "Pauline, Célia et Mathilde",
+    "handle": "@hollywood_savoy",
+    "n": 6,
+    "arr": 2.0,
+    "zone": "Paris 2"
+  },
+  {
+    "name": "La Fontaine Gallion",
+    "url": "https://www.instagram.com/lafontainegaillonparis/",
+    "group": "Paris 2",
+    "geocode_query": "La Fontaine Gallion, 2e arrondissement, Paris, France",
+    "people": "Pauline, Célia et Mathilde",
+    "handle": "@lafontainegaillonparis",
+    "n": 7,
+    "arr": 2.0,
+    "zone": "Paris 2"
+  },
+  {
+    "name": "Babi",
+    "url": "https://www.instagram.com/restaurant.babi/?hl=fr",
+    "group": "Paris 2",
+    "geocode_query": "Babi, 2e arrondissement, Paris, France",
+    "people": "Camille",
+    "handle": "@restaurant.babi",
+    "n": 8,
+    "arr": 2.0,
+    "zone": "Paris 2"
+  },
+  {
+    "name": "Tiger Milk Sentier",
+    "url": "https://www.instagram.com/tigermilkgroup/?hl=fr",
+    "group": "Paris 2",
+    "geocode_query": "Tiger Milk Sentier, 2e arrondissement, Paris, France",
+    "people": "Camille et Jada",
+    "handle": "@tigermilkgroup",
+    "n": 9,
+    "arr": 2.0,
+    "zone": "Paris 2"
+  },
+  {
+    "name": "Manteigaria Opéra",
+    "url": "https://www.instagram.com/manteigaria.fr/?hl=fr",
+    "group": "Paris 2",
+    "geocode_query": "Manteigaria Opéra, 2e arrondissement, Paris, France",
+    "people": "Camille",
+    "handle": "@manteigaria.fr",
+    "n": 10,
+    "arr": 2.0,
+    "zone": "Paris 2"
+  },
+  {
+    "name": "Pompom",
+    "url": "https://www.instagram.com/lepompon_restaurant/",
+    "group": "Paris 2",
+    "geocode_query": "Pompom, 2e arrondissement, Paris, France",
+    "people": "Pauline et Charlotte",
+    "handle": "@lepompon_restaurant",
+    "n": 11,
+    "arr": 2.0,
+    "zone": "Paris 2"
+  },
+  {
+    "name": "Drouant",
+    "url": "https://www.instagram.com/drouantparis/?hl=fr",
+    "group": "Paris 2",
+    "geocode_query": "Drouant, 2e arrondissement, Paris, France",
+    "people": "Marine",
+    "handle": "@drouantparis",
+    "n": 12,
+    "arr": 2.0,
+    "zone": "Paris 2"
+  },
+  {
+    "name": "L'atelier entrecote et volaille",
+    "url": "https://www.instagram.com/latelierentrecoteetvolaille/?hl=fr",
+    "group": "Paris 2",
+    "geocode_query": "L'atelier entrecote et volaille, 2e arrondissement, Paris, France",
+    "people": "",
+    "handle": "@latelierentrecoteetvolaille",
+    "n": 13,
+    "arr": 2.0,
+    "zone": "Paris 2"
+  },
+  {
+    "name": "Onii San",
+    "url": "https://www.instagram.com/oniisanizakaya/",
+    "group": "Paris 3",
+    "geocode_query": "Onii San, 3e arrondissement, Paris, France",
+    "people": "Valentine et Pauline",
+    "handle": "@oniisanizakaya",
+    "n": 14,
+    "arr": 3.0,
+    "zone": "Paris 3"
+  },
+  {
+    "name": "Manteigaria Rambuteau",
+    "url": "https://www.instagram.com/manteigaria.fr/?hl=fr",
+    "group": "Paris 3",
+    "geocode_query": "Manteigaria Rambuteau, 3e arrondissement, Paris, France",
+    "people": "Camille",
+    "handle": "@manteigaria.fr",
+    "n": 15,
+    "arr": 3.0,
+    "zone": "Paris 3"
+  },
+  {
+    "name": "Tekes",
+    "url": "https://www.instagram.com/tekes_paris/?hl=fr",
+    "group": "Paris 3",
+    "geocode_query": "Tekes, 3e arrondissement, Paris, France",
+    "people": "Leevan",
+    "handle": "@tekes_paris",
+    "n": 16,
+    "arr": 3.0,
+    "zone": "Paris 3"
+  },
+  {
+    "name": "Dar Mima",
+    "url": "https://www.instagram.com/darmima_restaurant/",
+    "group": "Paris 5",
+    "geocode_query": "Dar Mima, 5e arrondissement, Paris, France",
+    "people": "Charlotte et Pauline",
+    "handle": "@darmima_restaurant",
+    "n": 17,
+    "arr": 5.0,
+    "zone": "Paris 5"
+  },
+  {
+    "name": "Vesper",
+    "url": "https://www.instagram.com/vesper_paris/",
+    "group": "Paris 7",
+    "geocode_query": "Vesper, 7e arrondissement, Paris, France",
+    "people": "Pauline, Célia et Mathilde",
+    "handle": "@vesper_paris",
+    "n": 18,
+    "arr": 7.0,
+    "zone": "Paris 7"
+  },
+  {
+    "name": "Fitzgerald",
+    "url": "https://www.instagram.com/fitzgerald.paris/",
+    "group": "Paris 7",
+    "geocode_query": "Fitzgerald, 7e arrondissement, Paris, France",
+    "people": "Pauline, Célia et Mathilde",
+    "handle": "@fitzgerald.paris",
+    "n": 19,
+    "arr": 7.0,
+    "zone": "Paris 7"
+  },
+  {
+    "name": "Matsuri Bac",
+    "url": "https://www.instagram.com/matsuriofficiel/?hl=fr",
+    "group": "Paris 7",
+    "geocode_query": "Matsuri Bac, 7e arrondissement, Paris, France",
+    "people": "Leevan et Chahinez",
+    "handle": "@matsuriofficiel",
+    "n": 20,
+    "arr": 7.0,
+    "zone": "Paris 7"
+  },
+  {
+    "name": "Thoumieux",
+    "url": "https://www.instagram.com/thoumieuxparis/",
+    "group": "Paris 7",
+    "geocode_query": "Thoumieux, 7e arrondissement, Paris, France",
+    "people": "Chahinez et Sidney",
+    "handle": "@thoumieuxparis",
+    "n": 21,
+    "arr": 7.0,
+    "zone": "Paris 7"
+  },
+  {
+    "name": "Berkeley",
+    "url": "https://www.instagram.com/berkeleyparis/",
+    "group": "Paris 8",
+    "geocode_query": "Berkeley, 8e arrondissement, Paris, France",
+    "people": "Morgane et Mathilde",
+    "handle": "@berkeleyparis",
+    "n": 22,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "Frivole",
+    "url": "https://www.instagram.com/frivole_restaurant/",
+    "group": "Paris 8",
+    "geocode_query": "Frivole, 8e arrondissement, Paris, France",
+    "people": "Valentine",
+    "handle": "@frivole_restaurant",
+    "n": 23,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "Aqua Kyoto",
+    "url": "https://www.instagram.com/aquakyotoparis/?hl=fr",
+    "group": "Paris 8",
+    "geocode_query": "Aqua Kyoto, 8e arrondissement, Paris, France",
+    "people": "Camille",
+    "handle": "@aquakyotoparis",
+    "n": 24,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "Manteigaria Saint Lazare",
+    "url": "https://www.instagram.com/manteigaria.fr/?hl=fr",
+    "group": "Paris 8",
+    "geocode_query": "Manteigaria Saint Lazare, 8e arrondissement, Paris, France",
+    "people": "Camille",
+    "handle": "@manteigaria.fr",
+    "n": 25,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "Doki Doki Marbeuf",
+    "url": "https://www.instagram.com/dokidoki_handrollbar/",
+    "group": "Paris 8",
+    "geocode_query": "Doki Doki Marbeuf, 8e arrondissement, Paris, France",
+    "people": "Pauline et Marine",
+    "handle": "@dokidoki_handrollbar",
+    "n": 26,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "Baronne",
+    "url": "https://www.instagram.com/baronne_restaurant/",
+    "group": "Paris 8",
+    "geocode_query": "Baronne, 8e arrondissement, Paris, France",
+    "people": "Charlotte et Pauline",
+    "handle": "@baronne_restaurant",
+    "n": 27,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "Maxim's",
+    "url": "https://www.instagram.com/maximsrestaurant_paris/",
+    "group": "Paris 8",
+    "geocode_query": "Maxim's, 8e arrondissement, Paris, France",
+    "people": "Charlotte et Pauline",
+    "handle": "@maximsrestaurant_paris",
+    "n": 28,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "Apicius",
+    "url": "https://www.instagram.com/apiciusparis/",
+    "group": "Paris 8",
+    "geocode_query": "Apicius, 8e arrondissement, Paris, France",
+    "people": "Charlotte et Pauline",
+    "handle": "@apiciusparis",
+    "n": 29,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "Gigi",
+    "url": "https://www.instagram.com/gigi_restaurant/",
+    "group": "Paris 8",
+    "geocode_query": "Gigi, 8e arrondissement, Paris, France",
+    "people": "Charlotte et Pauline",
+    "handle": "@gigi_restaurant",
+    "n": 30,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "Le Piaf",
+    "url": "https://www.instagram.com/lepiaf_restaurant/",
+    "group": "Paris 8",
+    "geocode_query": "Le Piaf, 8e arrondissement, Paris, France",
+    "people": "Charlotte et Pauline",
+    "handle": "@lepiaf_restaurant",
+    "n": 31,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "Mun",
+    "url": "https://www.instagram.com/mun_restaurant_paris/",
+    "group": "Paris 8",
+    "geocode_query": "Mun, 8e arrondissement, Paris, France",
+    "people": "Charlotte et Pauline",
+    "handle": "@mun_restaurant_paris",
+    "n": 32,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "Matsuri Boétie",
+    "url": "https://www.instagram.com/matsuriofficiel/?hl=fr",
+    "group": "Paris 8",
+    "geocode_query": "Matsuri Boétie, 8e arrondissement, Paris, France",
+    "people": "Leevan et Chahinez",
+    "handle": "@matsuriofficiel",
+    "n": 33,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "Matsuri Marbeuf",
+    "url": "https://www.instagram.com/matsuriofficiel/?hl=fr",
+    "group": "Paris 8",
+    "geocode_query": "Matsuri Marbeuf, 8e arrondissement, Paris, France",
+    "people": "Leevan et Chahinez",
+    "handle": "@matsuriofficiel",
+    "n": 34,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "Em Sherif",
+    "url": "https://www.instagram.com/emsherifcafe.paris/",
+    "group": "Paris 8",
+    "geocode_query": "Em Sherif, 8e arrondissement, Paris, France",
+    "people": "Chahinez",
+    "handle": "@emsherifcafe.paris",
+    "n": 35,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "Le Matignon",
+    "url": "https://www.instagram.com/matignonparisofficiel/",
+    "group": "Paris 8",
+    "geocode_query": "Le Matignon, 8e arrondissement, Paris, France",
+    "people": "Chahinez et Sidney",
+    "handle": "@matignonparisofficiel",
+    "n": 36,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "La Maison du Caviar",
+    "url": "https://www.instagram.com/lamaisonducaviar/",
+    "group": "Paris 8",
+    "geocode_query": "La Maison du Caviar, 8e arrondissement, Paris, France",
+    "people": "Chahinez et Sidney",
+    "handle": "@lamaisonducaviar",
+    "n": 37,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "Pavillon Paris",
+    "url": "https://www.instagram.com/pavyllon_paris/?hl=fr",
+    "group": "Paris 8",
+    "geocode_query": "Pavillon Paris, 8e arrondissement, Paris, France",
+    "people": "Marine, Charlotte, Morgane et Mathilde",
+    "handle": "@pavyllon_paris",
+    "n": 38,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "La maison nordique",
+    "url": "https://www.instagram.com/lamaisonnordique/?hl=fr",
+    "group": "Paris 8",
+    "geocode_query": "La maison nordique, 8e arrondissement, Paris, France",
+    "people": "Marine",
+    "handle": "@lamaisonnordique",
+    "n": 39,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "Le Taillevent",
+    "url": "https://www.instagram.com/letaillevent/?hl=fr",
+    "group": "Paris 8",
+    "geocode_query": "Le Taillevent, 8e arrondissement, Paris, France",
+    "people": "Marine",
+    "handle": "@letaillevent",
+    "n": 40,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "110 le Taillevent",
+    "url": "https://www.instagram.com/les110detailleventparis/?hl=fr",
+    "group": "Paris 8",
+    "geocode_query": "110 le Taillevent, 8e arrondissement, Paris, France",
+    "people": "Marine",
+    "handle": "@les110detailleventparis",
+    "n": 41,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "Mimosa",
+    "url": "https://www.instagram.com/mimosarueroyale/",
+    "group": "Paris 8",
+    "geocode_query": "Mimosa, 8e arrondissement, Paris, France",
+    "people": "Sidney",
+    "handle": "@mimosarueroyale",
+    "n": 42,
+    "arr": 8.0,
+    "zone": "Paris 8"
+  },
+  {
+    "name": "Doki Doki Martyrs",
+    "url": "https://www.instagram.com/dokidoki_handrollbar/",
+    "group": "Paris 9",
+    "geocode_query": "Doki Doki Martyrs, 9e arrondissement, Paris, France",
+    "people": "Pauline et Marine",
+    "handle": "@dokidoki_handrollbar",
+    "n": 43,
+    "arr": 9.0,
+    "zone": "Paris 9"
+  },
+  {
+    "name": "Beau Coco",
+    "url": "https://www.instagram.com/beaucocorestaurant_/",
+    "group": "Paris 9",
+    "geocode_query": "Beau Coco, 9e arrondissement, Paris, France",
+    "people": "Charlotte et Pauline",
+    "handle": "@beaucocorestaurant_",
+    "n": 44,
+    "arr": 9.0,
+    "zone": "Paris 9"
+  },
+  {
+    "name": "Perruche",
+    "url": "https://www.instagram.com/perruche_paris/",
+    "group": "Paris 9",
+    "geocode_query": "Perruche, 9e arrondissement, Paris, France",
+    "people": "Charlotte et Pauline",
+    "handle": "@perruche_paris",
+    "n": 45,
+    "arr": 9.0,
+    "zone": "Paris 9"
+  },
+  {
+    "name": "Tiger Milk Canal",
+    "url": "https://www.instagram.com/tigermilkgroup/?hl=fr",
+    "group": "Paris 10",
+    "geocode_query": "Tiger Milk Canal, 10e arrondissement, Paris, France",
+    "people": "Camille et Jada",
+    "handle": "@tigermilkgroup",
+    "n": 46,
+    "arr": 10.0,
+    "zone": "Paris 10"
+  },
+  {
+    "name": "Holy Burek",
+    "url": "https://www.instagram.com/holyburek_paris/?hl=fr",
+    "group": "Paris 10",
+    "geocode_query": "Holy Burek, 10e arrondissement, Paris, France",
+    "people": "Marine",
+    "handle": "@holyburek_paris",
+    "n": 47,
+    "arr": 10.0,
+    "zone": "Paris 10"
+  },
+  {
+    "name": "Abstinence",
+    "url": "https://www.instagram.com/abstinence.paris/",
+    "group": "Paris 15",
+    "geocode_query": "Abstinence, 15e arrondissement, Paris, France",
+    "people": "Pauline, Célia et Mathilde",
+    "handle": "@abstinence.paris",
+    "n": 48,
+    "arr": 15.0,
+    "zone": "Paris 15"
+  },
+  {
+    "name": "Rouge Suffrend",
+    "url": "https://www.instagram.com/rouge.suffren/?hl=fr",
+    "group": "Paris 15",
+    "geocode_query": "Rouge Suffrend, 15e arrondissement, Paris, France",
+    "people": "Camille",
+    "handle": "@rouge.suffren",
+    "n": 49,
+    "arr": 15.0,
+    "zone": "Paris 15"
+  },
+  {
+    "name": "Podium",
+    "url": "https://www.instagram.com/bistrot_podium/?hl=fr",
+    "group": "Paris 15",
+    "geocode_query": "Podium, 15e arrondissement, Paris, France",
+    "people": "Leevan et Célia",
+    "handle": "@bistrot_podium",
+    "n": 50,
+    "arr": 15.0,
+    "zone": "Paris 15"
+  },
+  {
+    "name": "Fram",
+    "url": "https://www.instagram.com/framebrasserie/?hl=fr",
+    "group": "Paris 15",
+    "geocode_query": "Fram, 15e arrondissement, Paris, France",
+    "people": "Lucie et Sidney",
+    "handle": "@framebrasserie",
+    "n": 51,
+    "arr": 15.0,
+    "zone": "Paris 15"
+  },
+  {
+    "name": "Girafe",
+    "url": "https://www.instagram.com/girafe_paris/",
+    "group": "Paris 16",
+    "geocode_query": "Girafe, 16e arrondissement, Paris, France",
+    "people": "Charlotte et Pauline",
+    "handle": "@girafe_paris",
+    "n": 52,
+    "arr": 16.0,
+    "zone": "Paris 16"
+  },
+  {
+    "name": "Maison Revka",
+    "url": "https://www.instagram.com/maisonrevka_restaurant/",
+    "group": "Paris 16",
+    "geocode_query": "Maison Revka, 16e arrondissement, Paris, France",
+    "people": "Charlotte et Pauline",
+    "handle": "@maisonrevka_restaurant",
+    "n": 53,
+    "arr": 16.0,
+    "zone": "Paris 16"
+  },
+  {
+    "name": "Maison Bleu",
+    "url": "https://www.instagram.com/monsieur_bleu/",
+    "group": "Paris 16",
+    "geocode_query": "Maison Bleu, 16e arrondissement, Paris, France",
+    "people": "Charlotte et Pauline",
+    "handle": "@monsieur_bleu",
+    "n": 54,
+    "arr": 16.0,
+    "zone": "Paris 16"
+  },
+  {
+    "name": "Matsuri Passy",
+    "url": "https://www.instagram.com/matsuriofficiel/?hl=fr",
+    "group": "Paris 16",
+    "geocode_query": "Matsuri Passy, 16e arrondissement, Paris, France",
+    "people": "Leevan et Chahinez",
+    "handle": "@matsuriofficiel",
+    "n": 55,
+    "arr": 16.0,
+    "zone": "Paris 16"
+  },
+  {
+    "name": "Matsuri Victor Hugo",
+    "url": "https://www.instagram.com/matsuriofficiel/?hl=fr",
+    "group": "Paris 16",
+    "geocode_query": "Matsuri Victor Hugo, 16e arrondissement, Paris, France",
+    "people": "Leevan et Chahinez",
+    "handle": "@matsuriofficiel",
+    "n": 56,
+    "arr": 16.0,
+    "zone": "Paris 16"
+  },
+  {
+    "name": "Lili Paris",
+    "url": "https://www.instagram.com/parislili/?hl=fr",
+    "group": "Paris 16",
+    "geocode_query": "Lili Paris, 16e arrondissement, Paris, France",
+    "people": "Marie et Sidney",
+    "handle": "@parislili",
+    "n": 57,
+    "arr": 16.0,
+    "zone": "Paris 16"
+  },
+  {
+    "name": "Le lobby",
+    "url": "https://www.peninsula.com/fr/paris/hotel-fine-dining/le-lobby-afternoon-tea",
+    "group": "Paris 16",
+    "geocode_query": "Le lobby, 16e arrondissement, Paris, France",
+    "people": "Marie et Sidney",
+    "handle": "",
+    "n": 58,
+    "arr": 16.0,
+    "zone": "Paris 16"
+  },
+  {
+    "name": "L'esprit Nouveau",
+    "url": "https://www.instagram.com/lespritnouveauparis/?hl=fr",
+    "group": "Paris 16",
+    "geocode_query": "L'esprit Nouveau, 16e arrondissement, Paris, France",
+    "people": "Anaïs, Camille et Marine",
+    "handle": "@lespritnouveauparis",
+    "n": 59,
+    "arr": 16.0,
+    "zone": "Paris 16"
+  },
+  {
+    "name": "L'Elyau Paris",
+    "url": "https://www.instagram.com/rooftopeylauparis/?hl=fr",
+    "group": "Paris 16",
+    "geocode_query": "L'Elyau Paris, 16e arrondissement, Paris, France",
+    "people": "Anaïs, Camille et Marine",
+    "handle": "@rooftopeylauparis",
+    "n": 60,
+    "arr": 16.0,
+    "zone": "Paris 16"
+  },
+  {
+    "name": "L'aventure",
+    "url": "https://www.instagram.com/laventurehotel/",
+    "group": "Paris 16",
+    "geocode_query": "L'aventure, 16e arrondissement, Paris, France",
+    "people": "Chahinez et Sidney",
+    "handle": "@laventurehotel",
+    "n": 61,
+    "arr": 16.0,
+    "zone": "Paris 16"
+  },
+  {
+    "name": "Les Jardins du Presbourg",
+    "url": "https://www.instagram.com/lesjardinsdupresbourg/",
+    "group": "Paris 16",
+    "geocode_query": "Les Jardins du Presbourg, 16e arrondissement, Paris, France",
+    "people": "Chahinez et Sidney",
+    "handle": "@lesjardinsdupresbourg",
+    "n": 62,
+    "arr": 16.0,
+    "zone": "Paris 16"
+  },
+  {
+    "name": "Karamna",
+    "url": "https://www.instagram.com/karamnaparis/?hl=fr",
+    "group": "Paris 16",
+    "geocode_query": "Karamna, 16e arrondissement, Paris, France",
+    "people": "Marine",
+    "handle": "@karamnaparis",
+    "n": 63,
+    "arr": 16.0,
+    "zone": "Paris 16"
+  },
+  {
+    "name": "Andaaz",
+    "url": "https://www.instagram.com/andaaz_paris/?hl=fr",
+    "group": "Paris 17",
+    "geocode_query": "Andaaz, 17e arrondissement, Paris, France",
+    "people": "Camille",
+    "handle": "@andaaz_paris",
+    "n": 64,
+    "arr": 17.0,
+    "zone": "Paris 17"
+  },
+  {
+    "name": "Matsuri Courcelles",
+    "url": "https://www.instagram.com/matsuriofficiel/?hl=fr",
+    "group": "Paris 17",
+    "geocode_query": "Matsuri Courcelles, 17e arrondissement, Paris, France",
+    "people": "Leevan et Chahinez",
+    "handle": "@matsuriofficiel",
+    "n": 65,
+    "arr": 17.0,
+    "zone": "Paris 17"
+  },
+  {
+    "name": "Tiger Milk Pigalle",
+    "url": "https://www.instagram.com/tigermilkgroup/?hl=fr",
+    "group": "Paris 18",
+    "geocode_query": "Tiger Milk Pigalle, 18e arrondissement, Paris, France",
+    "people": "Camille et Jada",
+    "handle": "@tigermilkgroup",
+    "n": 66,
+    "arr": 18.0,
+    "zone": "Paris 18"
+  },
+  {
+    "name": "Chez Mimi",
+    "url": "https://www.instagram.com/bistrot_chez_mimi/?hl=fr",
+    "group": "Banlieue - Colombe",
+    "geocode_query": "Chez Mimi, Colombe, France",
+    "people": "Leevan et Célia",
+    "handle": "@bistrot_chez_mimi",
+    "n": 67,
+    "arr": NaN,
+    "zone": "Banlieue"
+  },
+  {
+    "name": "Chou de Chanorier",
+    "url": "https://www.instagram.com/chou_de_chanorier/?hl=fr",
+    "group": "Banlieue - Croissy sur seine",
+    "geocode_query": "Chou de Chanorier, Croissy sur seine, France",
+    "people": "Leevan et Célia",
+    "handle": "@chou_de_chanorier",
+    "n": 68,
+    "arr": NaN,
+    "zone": "Banlieue"
+  },
+  {
+    "name": "Splash",
+    "url": "https://www.instagram.com/chezmonix/?hl=fr",
+    "group": "Banlieue - Asnière sur seine",
+    "geocode_query": "Splash, Asnière sur seine, France",
+    "people": "Leevan et Célia",
+    "handle": "@chezmonix",
+    "n": 69,
+    "arr": NaN,
+    "zone": "Banlieue"
+  },
+  {
+    "name": "Le bistrot des chefs",
+    "url": "https://www.instagram.com/le_bistrot_des_chefs/?hl=fr",
+    "group": "Banlieue - Suresnes",
+    "geocode_query": "Le bistrot des chefs, Suresnes, France",
+    "people": "Leevan et Célia",
+    "handle": "@le_bistrot_des_chefs",
+    "n": 70,
+    "arr": NaN,
+    "zone": "Banlieue"
+  },
+  {
+    "name": "La Haut",
+    "url": "https://www.instagram.com/bistrolahaut/?hl=fr",
+    "group": "Banlieue - Suresnes",
+    "geocode_query": "La Haut, Suresnes, France",
+    "people": "Leevan et Célia",
+    "handle": "@bistrolahaut",
+    "n": 71,
+    "arr": NaN,
+    "zone": "Banlieue"
+  },
+  {
+    "name": "Papa Pool",
+    "url": "https://www.instagram.com/bistrotpapa_pool/?hl=fr",
+    "group": "Banlieue - Clamart",
+    "geocode_query": "Papa Pool, Clamart, France",
+    "people": "Leevan et Célia",
+    "handle": "@bistrotpapa_pool",
+    "n": 72,
+    "arr": NaN,
+    "zone": "Banlieue"
+  },
+  {
+    "name": "Saperlipopette",
+    "url": "https://www.instagram.com/lesaperlipopette/?hl=fr",
+    "group": "Banlieue - Puteaux",
+    "geocode_query": "Saperlipopette, Puteaux, France",
+    "people": "Leevan et Célia",
+    "handle": "@lesaperlipopette",
+    "n": 73,
+    "arr": NaN,
+    "zone": "Banlieue"
+  },
+  {
+    "name": "Cocorocco",
+    "url": "https://www.instagram.com/bistrot_coco_rocco/?hl=fr",
+    "group": "Banlieue - Puteaux",
+    "geocode_query": "Cocorocco, Puteaux, France",
+    "people": "Leevan et Célia",
+    "handle": "@bistrot_coco_rocco",
+    "n": 74,
+    "arr": NaN,
+    "zone": "Banlieue"
+  },
+  {
+    "name": "Sapristi",
+    "url": "https://www.instagram.com/sapristi_bistrot/?hl=fr",
+    "group": "Banlieue - Rueil Malmaison",
+    "geocode_query": "Sapristi, Rueil Malmaison, France",
+    "people": "Leevan et Célia",
+    "handle": "@sapristi_bistrot",
+    "n": 75,
+    "arr": NaN,
+    "zone": "Banlieue"
+  },
+  {
+    "name": "Monsieur Claude",
+    "url": "https://www.instagram.com/monsieurclaude_bistrot/?hl=fr",
+    "group": "Banlieue - Rueil Malmaison",
+    "geocode_query": "Monsieur Claude, Rueil Malmaison, France",
+    "people": "Leevan et Célia",
+    "handle": "@monsieurclaude_bistrot",
+    "n": 76,
+    "arr": NaN,
+    "zone": "Banlieue"
+  },
+  {
+    "name": "Madame Soleil",
+    "url": "https://www.instagram.com/madamesoleil_rooftop/?hl=fr",
+    "group": "Banlieue - Rueil Malmaison",
+    "geocode_query": "Madame Soleil, Rueil Malmaison, France",
+    "people": "Leevan et Célia",
+    "handle": "@madamesoleil_rooftop",
+    "n": 77,
+    "arr": NaN,
+    "zone": "Banlieue"
+  },
+  {
+    "name": "Micheline",
+    "url": "https://www.instagram.com/bistrot_micheline/?hl=fr",
+    "group": "Banlieue - Sèvres",
+    "geocode_query": "Micheline, Sèvres, France",
+    "people": "Leevan et Célia",
+    "handle": "@bistrot_micheline",
+    "n": 78,
+    "arr": NaN,
+    "zone": "Banlieue"
+  },
+  {
+    "n": 79,
+    "name": "Bonnie",
+    "group": "Paris 4",
+    "people": "Charlotte et Pauline",
+    "handle": "@bonnie_restaurant_bar",
+    "url": "https://www.instagram.com/bonnie_restaurant_bar/",
+    "zone": "Paris 4",
+    "lat": null,
+    "lon": null,
+    "address": ""
+  },
+  {
+    "n": 80,
+    "name": "L’atelier entrecote et volaille",
+    "group": "Paris 4",
+    "people": "Marine",
+    "handle": "@latelierentrecoteetvolaille",
+    "url": "https://www.instagram.com/latelierentrecoteetvolaille/?hl=fr",
+    "zone": "Paris 4",
+    "lat": null,
+    "lon": null,
+    "address": ""
+  }
+];
+
+const map = L.map('map', { zoomControl:true }).setView([48.8566,2.3522], 12);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+const cluster = L.markerClusterGroup({ chunkedLoading:true });
+map.addLayer(cluster);
+
+const ALL_ZONES = [...Array(20)].map((_,i)=>`Paris ${i+1}`).concat(["Banlieue"]);
+let activeZone = "Tous";
+let searchTerm = "";
+
+function el(id){ return document.getElementById(id); }
+function norm(s){ return (s||'').toString().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,''); }
+function zoneOf(p){ return (p.zone || "Banlieue"); }
+
+function filtered(){
+  return PLACES.filter(p=>{
+    const z = zoneOf(p);
+    const okZone = (activeZone==="Tous") || (z===activeZone);
+    const okSearch = !searchTerm || norm(p.name).includes(norm(searchTerm)) || norm(p.group).includes(norm(searchTerm)) || norm(p.people).includes(norm(searchTerm));
+    return okZone && okSearch;
+  });
+}
+
+function renderChips(){
+  const chips=el('chips'); chips.innerHTML='';
+  const counts = {};
+  PLACES.forEach(p=>{ const z=zoneOf(p); counts[z]=(counts[z]||0)+1; });
+  const labels = ["Tous", ...ALL_ZONES];
+  labels.forEach(z=>{
+    const c=document.createElement('div');
+    c.className='chip'+(z===activeZone?' active':'');
+    const n = z==="Tous" ? PLACES.length : (counts[z]||0);
+    c.textContent = `${z} (${n})`;
+    c.onclick=()=>{ activeZone=z; renderChips(); refresh(); openSheet(); };
+    chips.appendChild(c);
+  });
+}
+
+function renderList(items){
+  const list=el('list'); list.innerHTML='';
+  items.forEach(p=>{
+    const div=document.createElement('div');
+    div.className='item';
+    div.innerHTML = `
+      <b>${p.n}. ${p.name}</b>
+      <div class="meta">${p.group}${p.people ? " • "+p.people : ""}${p.handle ? " • "+p.handle : ""}</div>
+      <div class="addr">${p.address || ""}</div>
+      <a href="${p.url}" target="_blank" rel="noopener noreferrer">Ouvrir Instagram</a>
+    `;
+    div.onclick=()=>{
+      if(p.__marker){
+        map.setView(p.__marker.getLatLng(), Math.max(map.getZoom(), 15));
+        p.__marker.openPopup();
+      }
+    };
+    list.appendChild(div);
+  });
+}
+
+function refresh(){
+  const items = filtered();
+  el('sheetTitle').textContent = `Restaurants (${items.length} / ${PLACES.length})`;
+
+  cluster.clearLayers();
+  items.forEach(p=>{
+    if(!p.lat || !p.lon) return;
+    const m = L.marker([p.lat, p.lon]);
+    p.__marker = m;
+
+    const safeAddr=(p.address||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const safePeople=(p.people||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const popup = `
+      <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; max-width:260px;">
+        <b>${p.n}. ${p.name}</b><br/>
+        <span style="opacity:.75">${p.group}${safePeople ? " • "+safePeople : ""}${p.handle ? " • "+p.handle : ""}</span>
+        ${safeAddr ? `<div style="margin-top:6px; font-size:12px;">${safeAddr}</div>` : ""}
+        <div style="margin-top:8px;">
+          <a href="${p.url}" target="_blank" rel="noopener noreferrer">Ouvrir Instagram</a>
+        </div>
+      </div>`;
+    m.bindPopup(popup);
+    cluster.addLayer(m);
+  });
+
+  renderList(items);
+
+  const b=[];
+  cluster.eachLayer(m=>{ if(m.getLatLng){ const ll=m.getLatLng(); b.push([ll.lat,ll.lng]); }});
+  if(b.length) map.fitBounds(b, { padding:[30,30] });
+}
+
+el('search').addEventListener('input', e=>{ searchTerm = e.target.value || ''; refresh(); openSheet(); });
+el('fit').onclick=()=>{
+  const b=[];
+  cluster.eachLayer(m=>{ if(m.getLatLng){ const ll=m.getLatLng(); b.push([ll.lat,ll.lng]); }});
+  if(b.length) map.fitBounds(b, { padding:[30,30] });
+};
+
+const sheet = el('sheet');
+function openSheet(){ sheet.classList.add('open'); }
+function toggleSheet(){ sheet.classList.toggle('open'); }
+el('toggleList').onclick = toggleSheet;
+el('sheetHandle').onclick = toggleSheet;
+
+renderChips();
+refresh();
+</script>
+</body>
+</html>
